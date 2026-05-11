@@ -69,30 +69,75 @@ void oledkit_render_info_user(void) {
     keyball_oled_render_layerinfo();
 }
 #endif
-// オートマウスレイヤー用のタイマーと状態管理
+
+
+// --- 設定値 ---
+#define MOUSE_LAYER_INDEX 2              // マウスレイヤーの番号（適宜変更してください）
+#define AUTO_MOUSE_LAYER_KEEP_TIME 30000 // 通常の維持時間（30000ms = 30秒）
+#define MOUSE_TIMEOUT_AFTER_CLICK 500    // クリック後の維持時間（例：500ms = 0.5秒）
+#define AML_ACTIVATE_THRESHOLD 10        // 起動しきい値（小さいほど敏感、大きいほど鈍感になります）
+
+// --- 状態管理用変数 ---
 uint16_t mouse_timer = 0;
+uint16_t current_timeout = AUTO_MOUSE_LAYER_KEEP_TIME;
 bool is_mouse_layer_active = false;
+static int16_t x_cumulative = 0;
+static int16_t y_cumulative = 0;
 
-// マウスレイヤーの番号を指定（例：レイヤー2なら 2）
-#define MOUSE_LAYER_INDEX 2 
-// 元に戻るまでの待機時間（ミリ秒）
-#define MOUSE_TIMEOUT 1000 
+// 絶対値を計算する補助関数
+#define ABS(x) ((x) < 0 ? -(x) : (x))
 
-// トラックボールが動いた時に呼ばれる関数
+// トラックボールの動きを検知する関数
 void report_mouse_user(report_mouse_t* mouse_report) {
     if (mouse_report->x != 0 || mouse_report->y != 0) {
         if (!is_mouse_layer_active) {
-            layer_on(MOUSE_LAYER_INDEX);
-            is_mouse_layer_active = true;
+            // 【4. 意図しない接触の防止】移動量を蓄積
+            x_cumulative += mouse_report->x;
+            y_cumulative += mouse_report->y;
+            
+            // しきい値を超えたときだけレイヤーに入る
+            if (ABS(x_cumulative) > AML_ACTIVATE_THRESHOLD || ABS(y_cumulative) > AML_ACTIVATE_THRESHOLD) {
+                layer_on(MOUSE_LAYER_INDEX);
+                is_mouse_layer_active = true;
+                x_cumulative = 0;
+                y_cumulative = 0;
+            }
         }
-        mouse_timer = timer_read(); // タイマーをリセット
+        
+        if (is_mouse_layer_active) {
+            // 【3. トラックボールを動かすと30秒にリセット】
+            current_timeout = AUTO_MOUSE_LAYER_KEEP_TIME;
+            mouse_timer = timer_read();
+        }
     }
 }
 
-// 常に動いている監視関数
+// キー操作を検知する関数
+bool process_record_user(uint16_t keycode, keyrecord_t *record) {
+    if (is_mouse_layer_active) {
+        switch (keycode) {
+            // 【2. マウスキーをクリックした後の離脱制御】
+            // マウスボタン（BTN1〜BTN5）が操作された場合
+            case KC_MS_BTN1 ... KC_MS_BTN5:
+                if (!record->event.pressed) { // ボタンを離した瞬間
+                    // タイムアウトを短い値に変更
+                    current_timeout = MOUSE_TIMEOUT_AFTER_CLICK;
+                    mouse_timer = timer_read();
+                }
+                break;
+        }
+    }
+    return true; // 他のキー操作を通常通り処理
+}
+
+// 常に動いている監視関数（タイムアウト判定）
 void matrix_scan_user(void) {
-    if (is_mouse_layer_active && timer_elapsed(mouse_timer) > MOUSE_TIMEOUT) {
-        layer_off(MOUSE_LAYER_INDEX);
-        is_mouse_layer_active = false;
+    if (is_mouse_layer_active) {
+        if (timer_elapsed(mouse_timer) > current_timeout) {
+            layer_off(MOUSE_LAYER_INDEX);
+            is_mouse_layer_active = false;
+            x_cumulative = 0;
+            y_cumulative = 0;
+        }
     }
 }
