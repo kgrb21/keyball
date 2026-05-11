@@ -69,3 +69,30 @@ void oledkit_render_info_user(void) {
     keyball_oled_render_layerinfo();
 }
 #endif
+// オートマウスレイヤー用のタイマーと状態管理
+uint16_t mouse_timer = 0;
+bool is_mouse_layer_active = false;
+
+// マウスレイヤーの番号を指定（例：レイヤー2なら 2）
+#define MOUSE_LAYER_INDEX 2 
+// 元に戻るまでの待機時間（ミリ秒）
+#define MOUSE_TIMEOUT 1000 
+
+// トラックボールが動いた時に呼ばれる関数
+void report_mouse_user(report_mouse_t* mouse_report) {
+    if (mouse_report->x != 0 || mouse_report->y != 0) {
+        if (!is_mouse_layer_active) {
+            layer_on(MOUSE_LAYER_INDEX);
+            is_mouse_layer_active = true;
+        }
+        mouse_timer = timer_read(); // タイマーをリセット
+    }
+}
+
+// 常に動いている監視関数
+void matrix_scan_user(void) {
+    if (is_mouse_layer_active && timer_elapsed(mouse_timer) > MOUSE_TIMEOUT) {
+        layer_off(MOUSE_LAYER_INDEX);
+        is_mouse_layer_active = false;
+    }
+}
