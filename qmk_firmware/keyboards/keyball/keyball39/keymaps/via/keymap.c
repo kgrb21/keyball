@@ -3,23 +3,22 @@
 /* ==========================================================================
    1. オートマウスレイヤー(AML) の設定値
    ========================================================================== */
-#define MOUSE_LAYER_INDEX 2              // マウスレイヤーの番号
-#define AUTO_MOUSE_LAYER_KEEP_TIME 30000 // 通常の維持時間（30秒）
-#define MOUSE_TIMEOUT_AFTER_CLICK 500    // クリック後の維持時間（0.5秒）
-#define AML_ACTIVATE_THRESHOLD 10        // 起動しきい値（誤爆防止）
+#define MOUSE_LAYER_INDEX 2              
+#define AUTO_MOUSE_LAYER_KEEP_TIME 30000 
+#define MOUSE_TIMEOUT_AFTER_CLICK 500    
+#define AML_ACTIVATE_THRESHOLD 10        
 
-// 状態管理変数
 uint16_t aml_timer = 0;
 uint16_t aml_timeout = AUTO_MOUSE_LAYER_KEEP_TIME;
-bool aml_active = false;      // 現在マウスレイヤーが有効か
-bool aml_enable_sw = true;    // オートマウス機能自体のON/OFF（AML_TOキーで操作）
+bool aml_active = false;      
+bool aml_enable_sw = true;    
 static int16_t aml_x = 0;
 static int16_t aml_y = 0;
 
 #define ABS(x) ((x) < 0 ? -(x) : (x))
 
 /* ==========================================================================
-   2. キーマップ定義 (ご提示の universal レイアウトを完全維持)
+   2. キーマップ定義 (LAYOUT_universal)
    ========================================================================== */
 const uint16_t PROGMEM keymaps[][MATRIX_ROWS][MATRIX_COLS] = {
   [0] = LAYOUT_universal(
@@ -52,46 +51,36 @@ const uint16_t PROGMEM keymaps[][MATRIX_ROWS][MATRIX_COLS] = {
 };
 
 /* ==========================================================================
-   3. ロジック実装部 (オートマウス機能)
+   3. ロジック実装部 (AML)
    ========================================================================== */
 
-// ボールの動きを検知
 void report_mouse_user(report_mouse_t* mouse_report) {
-    // 1. システム側のAML状態を取得（AML_TOキーと連動させるため）
-    // もしシステム側で無効化されていたら何もしない
     if (!aml_enable_sw) return;
 
     if (mouse_report->x != 0 || mouse_report->y != 0) {
         if (!aml_active) {
             aml_x += mouse_report->x;
             aml_y += mouse_report->y;
-            // 4. 指定のしきい値を超えた時だけ起動
             if (ABS(aml_x) > AML_ACTIVATE_THRESHOLD || ABS(aml_y) > AML_ACTIVATE_THRESHOLD) {
                 layer_on(MOUSE_LAYER_INDEX);
                 aml_active = true;
                 aml_x = 0; aml_y = 0;
             }
         }
-        
         if (aml_active) {
-            // 3. 動かしている間は常に30秒にリセット
             aml_timeout = AUTO_MOUSE_LAYER_KEEP_TIME;
             aml_timer = timer_read();
         }
     }
 }
 
-// キー操作（クリック後の離脱処理 & AML_TOの連動）
 bool process_record_user(uint16_t keycode, keyrecord_t *record) {
     switch (keycode) {
         case AML_TO:
-            if (record->event.pressed) {
-                aml_enable_sw = !aml_enable_sw;
-            }
+            if (record->event.pressed) { aml_enable_sw = !aml_enable_sw; }
             break;
         case KC_MS_BTN1 ... KC_MS_BTN5:
             if (aml_active && !record->event.pressed) {
-                // 2. マウスボタンを離した瞬間、0.5秒のクイック離脱モードへ
                 aml_timeout = MOUSE_TIMEOUT_AFTER_CLICK;
                 aml_timer = timer_read();
             }
@@ -100,7 +89,6 @@ bool process_record_user(uint16_t keycode, keyrecord_t *record) {
     return true; 
 }
 
-// 常に動く監視処理（タイムアウトの実行）
 void matrix_scan_user(void) {
     if (aml_active) {
         if (timer_elapsed(aml_timer) > aml_timeout) {
@@ -110,3 +98,34 @@ void matrix_scan_user(void) {
         }
     }
 }
+
+/* ==========================================================================
+   4. OLED 表示設定 (ここを追加しました)
+   ========================================================================== */
+#ifdef OLED_ENABLE
+bool oled_task_user(void) {
+    // USBケーブルが刺さっている側（Master）の表示
+    if (is_keyboard_master()) {
+        oled_write_P(PSTR("Layer: "), false);
+        switch (get_highest_layer(layer_state)) {
+            case 0:  oled_write_ln_P(PSTR("Default"), false); break;
+            case 1:  oled_write_ln_P(PSTR("Lower  "), false); break;
+            case 2:  oled_write_ln_P(PSTR("MOUSE  "), false); break; // AML起動中
+            case 3:  oled_write_ln_P(PSTR("Raise  "), false); break;
+            default: oled_write_ln_P(PSTR("Unknown"), false); break;
+        }
+
+        // オートマウス機能の状態
+        oled_write_P(aml_enable_sw ? PSTR("AML: ON \n") : PSTR("AML: OFF\n"), false);
+        
+        // 最後に押したキー（デバッグ用）
+        oled_write_P(PSTR("Keyball39 "), false);
+    } 
+    // 反対側（Slave）の表示
+    else {
+        oled_write_ln_P(PSTR("Keyball39"), false);
+        oled_write_ln_P(PSTR("  v0.1  "), false);
+    }
+    return false;
+}
+#endif
